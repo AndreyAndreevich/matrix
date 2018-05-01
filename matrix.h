@@ -1,77 +1,136 @@
 #include <set>
-#include <iostream>
 #include <tuple>
-#include <functional>
 #include <algorithm>
 
-template<typename T, T default_value>
-class Matrix;
+//----------<сравнение кортежей в set>------------------------------------------------------
 
+template<int N,typename ...Args>
+struct compare;
 
-template<typename T, T default_value>
-class matrix_body {
-  friend class Matrix<T,default_value>;
-  std::set<std::tuple<int,int,T>> elements;
-  std::tuple<int,int,T> previous_value;
-
-  matrix_body() {
-    previous_value = std::make_tuple(0,0,default_value);
-  }
-
-  void check() { 
-    if(std::get<2>(previous_value) != default_value)
-      elements.emplace(previous_value);
-    else {
-      auto iter = std::find_if(elements.begin(),elements.end(),
-        [this](decltype(*elements.begin()) element){
-        return std::get<0>(this->previous_value) == std::get<0>(element) 
-            && std::get<1>(this->previous_value) == std::get<1>(element);
-      });
-      if (iter != elements.end())
-        elements.erase(iter);
-    }
-  }
-
-public:
-  T& operator[](const size_t m){
-    std::get<1>(previous_value) = m;
-    auto iter = std::find_if(elements.begin(),elements.end(),
-    [this](decltype(*elements.begin()) element){
-      return std::get<0>(this->previous_value) == std::get<0>(element) 
-          && std::get<1>(this->previous_value) == std::get<1>(element);
-    });
-    if (iter == elements.end()) 
-      std::get<2>(previous_value) = default_value;
-    else std::get<2>(previous_value) = std::get<2>(*iter);
-    return std::get<2>(previous_value);
+template<typename ...Args>
+struct compare<0,Args...> {
+  bool operator()(const std::tuple<Args...>& left, const std::tuple<Args...>& right) {
+    return std::get<0>(left) ==  std::get<0>(right);
   }
 };
 
+template<int N,typename ...Args>
+struct compare {
+  bool operator()(const std::tuple<Args...>& left, const std::tuple<Args...>& right) {
+    return std::get<N>(left) ==  std::get<N>(right) ? compare<N-1,Args...>{}(left,right) : false;
+  }
+};
 
-template<typename T, T default_value>
-class Matrix {
-  using matrix = matrix_body<T,default_value>;
+//----------</сравнение кортежей в set>------------------------------------------------------
 
-  matrix body;
+//----------<Матрица>------------------------------------------------------
+
+template<typename T, T default_value,int N,int current,typename ...Args>
+class Matrix;
+
+//----------<Одномерная матрица>------------------------------------------------------
+
+template<typename T, T default_value, int N,typename ...Args>
+class Matrix<T,default_value,N,1,Args...> {
+  using data_type = std::tuple<Args...,int,T>;
+  std::set<data_type> data;
+  data_type buffer;
 public:
-  size_t size() {
-    body.check();
-    return body.elements.size();
+  Matrix<T,default_value,N,1,Args...> () {
+    std::get<std::tuple_size<data_type>::value - 1>(buffer) = default_value;
+  }
+  T& operator[](const int n){
+    this->set_index<sizeof...(Args)>(n);
+    auto resultIter = find(buffer);
+    if (resultIter != data.end())
+      buffer = *resultIter;
+    else 
+      std::get<std::tuple_size<data_type>::value - 1>(buffer) = default_value;
+    return std::get<std::tuple_size<data_type>::value - 1>(buffer);
   }
 
-  matrix& operator[](const size_t n) {
-    body.check();
-    std::get<0>(body.previous_value) = n;
-    return body;
+  int size() {
+    return data.size();
+  }
+
+  template<int M>
+  void set_index(int index) {
+    std::get<M>(buffer) = index;
   }
 
   auto begin() {
-    body.check();
-    return body.elements.begin();
+    return data.begin();
   }
 
   auto end() {
-    body.check();
-    return body.elements.end();
+    return data.end();
+  }
+
+  void check(const int&) {
+    if(std::get<std::tuple_size<data_type>::value - 1>(buffer) != default_value) {
+      data.insert(buffer);
+    } else {
+      auto iter = find(buffer);
+      if (iter != data.end()) {
+        data.erase(iter);
+      }
+    }
+  }
+
+private:
+  auto find(const data_type& element) -> decltype(data.begin()) {
+    return find_if(data.begin(),data.end(),
+      [element,this](data_type data){
+        return this->m_compare(element,data);;
+      });
+  }
+
+  bool m_compare(const data_type& left, const data_type& right) {
+    return compare<sizeof...(Args),Args...,int,T>{}(left,right);
   }
 };
+
+//----------</Одномерная матрица>------------------------------------------------------
+
+//----------<N-мерная матрица>------------------------------------------------------
+
+template<typename T, T default_value,int N = 2,int current = N,typename ...Args>
+class Matrix {
+  using matrix = Matrix<T,default_value,N,current-1,Args...,int>;
+  matrix inserted;
+public:
+  matrix& operator[](const int n){
+    this->check(current);
+    this->set_index<sizeof...(Args)>(n);
+    return inserted;
+  }
+
+  int size() {
+    this->check(current);
+    return inserted.size();
+  }
+
+  template<int M>
+  void set_index(int index) {
+    inserted.set_index<M>(index);
+  }
+
+  void check(const int& current_) {
+    if (current_ != N)
+      return;
+    inserted.check(current_);
+  }
+
+  auto begin() {
+    check(current);
+    return inserted.begin();
+  }
+
+  auto end() {
+    return inserted.end();
+  }
+};
+
+//----------<N-мерная матрица>------------------------------------------------------
+
+//----------</Матрица>------------------------------------------------------
