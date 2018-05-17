@@ -34,29 +34,29 @@ BOOST_AUTO_TEST_SUITE(matrix_test)
     Matrix<int, -1> matrix;
     BOOST_CHECK_EQUAL(matrix.size(),0);
 
-    matrix[100][100] = 314;
-    matrix[200][200] = 314;
-    matrix[100][100] = -1;
+    matrix[100][25] = 314;
+    matrix[200][30] = 314;
+    matrix[100][25] = -1;
    
-    BOOST_CHECK_EQUAL(matrix[100][100],-1);
-    BOOST_CHECK_EQUAL(matrix[200][200],314);
+    BOOST_CHECK_EQUAL(matrix[100][25],-1);
+    BOOST_CHECK_EQUAL(matrix[200][30],314);
     BOOST_CHECK_EQUAL(matrix.size(),1);
   }
 
-/////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-  BOOST_AUTO_TEST_CASE(iterator_to_tuple)
+  BOOST_AUTO_TEST_CASE(iterator_count)
   {
     Matrix<int,-1> matrix;
     matrix[100][100] = 314;
+    matrix[100][100] = -1;
+    matrix[100][200] = 314;
+    int count = 0;
     int x, y, v;
-    for (auto& c : matrix) {
+    for (const auto& c : matrix) {
+      count++;
       std::tie(x,y,v) = c;
     }
-    
-    BOOST_CHECK_EQUAL(x,100);
-    BOOST_CHECK_EQUAL(y,100);
-    BOOST_CHECK_EQUAL(v,314);
+    BOOST_CHECK_EQUAL(count,1);
   }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -128,7 +128,7 @@ BOOST_AUTO_TEST_SUITE(matrix_test)
     Matrix<int,-1,5> matrix;
     matrix[1][2][3][4][5] = 314;
     int x, y, z, a, b, v;
-    for (auto& c : matrix) {
+    for (const auto& c : matrix) {
       std::tie(x,y,z,a,b,v) = c;
     }
     
@@ -138,6 +138,25 @@ BOOST_AUTO_TEST_SUITE(matrix_test)
     BOOST_CHECK_EQUAL(a,4);
     BOOST_CHECK_EQUAL(b,5);
     BOOST_CHECK_EQUAL(v,314);
+  }
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+  BOOST_AUTO_TEST_CASE(delete_martix)
+  {
+    Matrix<int,-1>::element_type value;
+    value = 10;
+    BOOST_CHECK_EQUAL(value,10);
+    {
+      Matrix<int,-1> matrix;
+      value = matrix[1][2] = 3;
+      BOOST_CHECK_EQUAL(matrix.size(),1);
+      BOOST_CHECK_EQUAL(value,3);
+    }
+
+    BOOST_CHECK_EQUAL(value,3);
+    value = 5;
+    BOOST_CHECK_EQUAL(value,5);
   }
 
 BOOST_AUTO_TEST_SUITE_END()

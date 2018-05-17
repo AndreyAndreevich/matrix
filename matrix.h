@@ -1,136 +1,185 @@
-#include <set>
+#include <map>
 #include <tuple>
 #include <algorithm>
+#include <iostream>
 
-//----------<сравнение кортежей в set>------------------------------------------------------
-
-template<int N,typename ...Args>
-struct compare;
+//----------<tuple по количеству>------------------------------------------------------
+template<int COUNT,typename ...Args>
+struct make_tuple_from_count;
 
 template<typename ...Args>
-struct compare<0,Args...> {
-  bool operator()(const std::tuple<Args...>& left, const std::tuple<Args...>& right) {
-    return std::get<0>(left) ==  std::get<0>(right);
-  }
+struct make_tuple_from_count<1,Args...> {
+  using type = std::tuple<size_t,Args...>;
 };
 
-template<int N,typename ...Args>
-struct compare {
-  bool operator()(const std::tuple<Args...>& left, const std::tuple<Args...>& right) {
-    return std::get<N>(left) ==  std::get<N>(right) ? compare<N-1,Args...>{}(left,right) : false;
-  }
-};
+template<int COUNT,typename ...Args>
+struct make_tuple_from_count : make_tuple_from_count<COUNT-1,size_t,Args...> {};
+//----------</tuple по количеству>------------------------------------------------------
 
-//----------</сравнение кортежей в set>------------------------------------------------------
-
-//----------<Матрица>------------------------------------------------------
-
-template<typename T, T default_value,int N,int current,typename ...Args>
+//----------<класс положений в матрице>-------------------------------------------------
+template<typename T, T default_value,size_t N>
 class Matrix;
 
-//----------<Одномерная матрица>------------------------------------------------------
+template<typename U,typename P,size_t N>
+class Position;
 
-template<typename T, T default_value, int N,typename ...Args>
-class Matrix<T,default_value,N,1,Args...> {
-  using data_type = std::tuple<Args...,int,T>;
-  std::set<data_type> data;
-  data_type buffer;
+template<typename U,typename P>
+class Position<U,P,1> {
+  friend U;
+  friend Position<U,P,2>;
+
+  U* matrix;
+  P position;
+
+  Position<U,P,1>(U* matrix_, P position_) : matrix(matrix_), position(position_) {}
+public: 
+  auto operator[](const size_t& index){
+    std::get<std::tuple_size<typename U::key_type>::value-1>(position) = index;
+    return matrix->getElement(position);
+  }
+};
+
+template<typename U,typename P,size_t N>
+class Position {
+  using position_type = Position<U,P,N-1>;
+  friend Position<U,P,N+1>;
+  friend U;
+
+  U* matrix;
+  P position;
+
+  Position<U,P,N>(U* matrix_, P position_) : matrix(matrix_), position(position_) {}
+  
 public:
-  Matrix<T,default_value,N,1,Args...> () {
-    std::get<std::tuple_size<data_type>::value - 1>(buffer) = default_value;
+  position_type operator[](const size_t& index){
+    std::get<std::tuple_size<typename U::key_type>::value-N>(position) = index;
+    return position_type(matrix,position);
   }
-  T& operator[](const int n){
-    this->set_index<sizeof...(Args)>(n);
-    auto resultIter = find(buffer);
-    if (resultIter != data.end())
-      buffer = *resultIter;
-    else 
-      std::get<std::tuple_size<data_type>::value - 1>(buffer) = default_value;
-    return std::get<std::tuple_size<data_type>::value - 1>(buffer);
+};
+//----------</класс положений в матрице>------------------------------------------------
+
+//----------<активный элемент матрицы>--------------------------------------------------
+template<typename T, T default_value,size_t N>
+class Element {
+  using matrix_type = Matrix<T,default_value,N>;
+  using key_type = typename make_tuple_from_count<N>::type;
+  using position_type = Position<matrix_type,key_type,1>;
+
+  friend position_type;
+  friend matrix_type;
+
+  template<typename T_, T_ default_value_,size_t N_>
+  friend std::ostream& operator<<(std::ostream&, const Element<T_,default_value_,N_>&);
+  template<typename T_, T_ default_value_,size_t N_>
+  friend bool operator ==(const Element<T_,default_value_,N_>& left, const T_& right);
+
+  T value = default_value;
+  key_type key;
+  matrix_type* matrix = nullptr;
+
+  Element<T,default_value,N>(const T& value_, const key_type& key_, matrix_type* matrix_) 
+    : value(value_), key(key_), matrix(matrix_) {}
+
+public: 
+  Element<T,default_value,N>() = default;
+  Element<T,default_value,N>& operator=(const T& value_) {
+    value = value_;
+    if (matrix)
+      matrix->setElement(key,value);
+    return *this;
   }
 
-  int size() {
+  operator T() {
+    return value;
+  }
+};
+
+template<typename T_, T_ default_value_,size_t N_>
+std::ostream& operator<<(std::ostream& out, const Element<T_,default_value_,N_>& element) {
+  out << element.value;
+  return out;
+}
+
+template<typename T_, T_ default_value_,size_t N_>
+bool operator ==(const Element<T_,default_value_,N_>& left, const T_& right) {
+  return left.value == right;
+}
+//----------</активный элемент матрицы>-------------------------------------------------
+
+//----------<Матрица>-------------------------------------------------------------------
+template<typename T, T default_value,size_t N = 2>
+class Matrix {
+public:
+  using key_type = typename make_tuple_from_count<N>::type;
+  using element_type = Element<T,default_value,N>;
+private:
+  using matrix_type = Matrix<T,default_value,N>;
+  using position_type = Position<matrix_type,key_type,N-1>;
+  using data_type = std::map<key_type,T>;
+
+  friend Position<matrix_type,key_type,1>;
+  friend element_type;
+  
+  data_type data;
+
+  element_type getElement(const key_type& key) {
+    if (data.end() == data.find(key)) {
+      return element_type(default_value,key,this);
+    }
+    return element_type(data[key],key,this);
+  }
+
+  template<typename U>
+  class _iterator : public std::iterator<std::input_iterator_tag,U> {
+  public:
+      _iterator(U first) {
+          current = first;
+      }
+
+      _iterator &operator++() {
+        current++;
+        return *this;
+      }
+
+      bool operator!=(const _iterator &it) {
+        return current != it.current;
+      }
+
+      auto operator*() {
+        return std::tuple_cat(current->first,std::make_tuple(current->second));
+      }
+  private:
+    U current;
+  };
+
+  using iterator = _iterator<decltype(data.begin())>;
+public:
+  ~Matrix<T,default_value,N>() {
+    //auto v = const_cast<Matrix<T,default_value,N>*>(this);
+
+  }
+  position_type operator[](const size_t& index){
+    key_type key;
+    std::get<0>(key) = index;
+    return position_type(this,key);
+  }
+
+  auto size() {
     return data.size();
   }
 
-  template<int M>
-  void set_index(int index) {
-    std::get<M>(buffer) = index;
+  void setElement(const key_type& key, const T& value) {
+    if (value == default_value)
+      data.erase(key);
+    else data[key] = value;
   }
 
-  auto begin() {
-    return data.begin();
+  iterator begin() {
+    return iterator(data.begin());
   }
 
-  auto end() {
-    return data.end();
-  }
-
-  void check(const int&) {
-    if(std::get<std::tuple_size<data_type>::value - 1>(buffer) != default_value) {
-      data.insert(buffer);
-    } else {
-      auto iter = find(buffer);
-      if (iter != data.end()) {
-        data.erase(iter);
-      }
-    }
-  }
-
-private:
-  auto find(const data_type& element) -> decltype(data.begin()) {
-    return find_if(data.begin(),data.end(),
-      [element,this](data_type data){
-        return this->m_compare(element,data);;
-      });
-  }
-
-  bool m_compare(const data_type& left, const data_type& right) {
-    return compare<sizeof...(Args),Args...,int,T>{}(left,right);
+  iterator end() {
+    return iterator(data.end());
   }
 };
-
-//----------</Одномерная матрица>------------------------------------------------------
-
-//----------<N-мерная матрица>------------------------------------------------------
-
-template<typename T, T default_value,int N = 2,int current = N,typename ...Args>
-class Matrix {
-  using matrix = Matrix<T,default_value,N,current-1,Args...,int>;
-  matrix inserted;
-public:
-  matrix& operator[](const int n){
-    this->check(current);
-    this->set_index<sizeof...(Args)>(n);
-    return inserted;
-  }
-
-  int size() {
-    this->check(current);
-    return inserted.size();
-  }
-
-  template<int M>
-  void set_index(int index) {
-    inserted.set_index<M>(index);
-  }
-
-  void check(const int& current_) {
-    if (current_ != N)
-      return;
-    inserted.check(current_);
-  }
-
-  auto begin() {
-    check(current);
-    return inserted.begin();
-  }
-
-  auto end() {
-    return inserted.end();
-  }
-};
-
-//----------<N-мерная матрица>------------------------------------------------------
-
-//----------</Матрица>------------------------------------------------------
+//----------</Матрица>-------------------------------------------------------------------
