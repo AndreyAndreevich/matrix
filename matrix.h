@@ -1,6 +1,9 @@
 #include <map>
 #include <tuple>
 #include <algorithm>
+#include <memory>
+#include <exception>
+
 #include <iostream>
 
 //----------<tuple по количеству>------------------------------------------------------
@@ -25,35 +28,42 @@ class Position;
 
 template<typename U,typename P>
 class Position<U,P,1> {
-  friend U;
+  using matrix_type = typename U::element_type;
+
+  friend matrix_type;
   friend Position<U,P,2>;
 
-  U* matrix;
-  P position;
+  U matrix_wptr;
+  mutable P position;
 
-  Position<U,P,1>(U* matrix_, P position_) : matrix(matrix_), position(position_) {}
+  Position<U,P,1>(U matrix_wptr_, P position_) : matrix_wptr(matrix_wptr_), position(position_) {}
 public: 
   auto operator[](const size_t& index){
-    std::get<std::tuple_size<typename U::key_type>::value-1>(position) = index;
-    return matrix->getElement(position);
+    if (matrix_wptr.expired())
+      throw std::runtime_error("matrix deleted");
+    std::get<std::tuple_size<typename matrix_type::key_type>::value-1>(position) = index;
+    return matrix_wptr.lock()->getElement(position);
   }
 };
 
 template<typename U,typename P,size_t N>
 class Position {
+  using matrix_type = typename U::element_type;
   using position_type = Position<U,P,N-1>;
   friend Position<U,P,N+1>;
-  friend U;
+  friend matrix_type;
 
-  U* matrix;
-  P position;
+  U matrix_wptr;
+  mutable P position;
 
-  Position<U,P,N>(U* matrix_, P position_) : matrix(matrix_), position(position_) {}
+  Position<U,P,N>(U matrix_wptr_, P position_) : matrix_wptr(matrix_wptr_), position(position_) {}
   
 public:
   position_type operator[](const size_t& index){
-    std::get<std::tuple_size<typename U::key_type>::value-N>(position) = index;
-    return position_type(matrix,position);
+    if (matrix_wptr.expired())
+      throw std::runtime_error("matrix deleted");
+    std::get<std::tuple_size<typename U::element_type::key_type>::value-N>(position) = index;
+    return position_type(matrix_wptr,position);
   }
 };
 //----------</класс положений в матрице>------------------------------------------------
@@ -75,22 +85,18 @@ class Element {
 
   T value = default_value;
   key_type key;
-  matrix_type* matrix = nullptr;
+  std::weak_ptr<matrix_type> matrix_wptr;
 
-  Element<T,default_value,N>(const T& value_, const key_type& key_, matrix_type* matrix_) 
-    : value(value_), key(key_), matrix(matrix_) {}
+  Element<T,default_value,N>(const key_type& key_, const T& value_, std::weak_ptr<matrix_type> matrix_wptr_) 
+    : key(key_), value(value_), matrix_wptr(matrix_wptr_) {}
 
 public: 
   Element<T,default_value,N>() = default;
   Element<T,default_value,N>& operator=(const T& value_) {
     value = value_;
-    if (matrix)
-      matrix->setElement(key,value);
+    if (!matrix_wptr.expired() && !matrix_wptr.lock()->isConst)
+      matrix_wptr.lock()->setElement(key,value);
     return *this;
-  }
-
-  operator T() {
-    return value;
   }
 };
 
@@ -114,64 +120,70 @@ public:
   using element_type = Element<T,default_value,N>;
 private:
   using matrix_type = Matrix<T,default_value,N>;
-  using position_type = Position<matrix_type,key_type,N-1>;
+  using position_type = Position<std::weak_ptr<matrix_type>,key_type,N>;
   using data_type = std::map<key_type,T>;
 
-  friend Position<matrix_type,key_type,1>;
+  friend Position<std::weak_ptr<matrix_type>,key_type,1>;
   friend element_type;
   
   data_type data;
+  std::shared_ptr<matrix_type> thisPtr;
+  mutable bool isConst = false;
 
   element_type getElement(const key_type& key) {
     if (data.end() == data.find(key)) {
-      return element_type(default_value,key,this);
+      return element_type(key,default_value,std::weak_ptr<matrix_type>(thisPtr));
     }
-    return element_type(data[key],key,this);
-  }
-
-  template<typename U>
-  class _iterator : public std::iterator<std::input_iterator_tag,U> {
-  public:
-      _iterator(U first) {
-          current = first;
-      }
-
-      _iterator &operator++() {
-        current++;
-        return *this;
-      }
-
-      bool operator!=(const _iterator &it) {
-        return current != it.current;
-      }
-
-      auto operator*() {
-        return std::tuple_cat(current->first,std::make_tuple(current->second));
-      }
-  private:
-    U current;
-  };
-
-  using iterator = _iterator<decltype(data.begin())>;
-public:
-  ~Matrix<T,default_value,N>() {
-    //auto v = const_cast<Matrix<T,default_value,N>*>(this);
-
-  }
-  position_type operator[](const size_t& index){
-    key_type key;
-    std::get<0>(key) = index;
-    return position_type(this,key);
-  }
-
-  auto size() {
-    return data.size();
+    return element_type(key,data.at(key),std::weak_ptr<matrix_type>(thisPtr));
   }
 
   void setElement(const key_type& key, const T& value) {
     if (value == default_value)
       data.erase(key);
     else data[key] = value;
+  }
+
+  template<typename U>
+  class _iterator : public U {
+  public:
+    _iterator(U first) : U(first) {}
+    auto operator->() = delete;
+    auto operator*() {
+      auto current = U::operator*();
+      return std::tuple_cat(current.first,std::make_tuple(current.second));
+    }
+  };
+
+  using iterator = _iterator<decltype(data.begin())>;
+public:
+  Matrix<T,default_value,N>() {
+    thisPtr = std::shared_ptr<matrix_type>(this,[](auto ptr){});
+  }
+
+  Matrix<T,default_value,N>(Matrix<T,default_value,N>& matrix) {
+    data = matrix.data;
+    thisPtr = std::shared_ptr<matrix_type>(this,[](auto ptr){});
+  }
+
+  ~Matrix<T,default_value,N>() {
+
+  }
+
+  auto operator[](const size_t& index){
+    key_type key;
+    std::get<0>(key) = index;
+    return position_type(std::weak_ptr<matrix_type>(thisPtr),key)[index];
+  }
+
+  auto operator[](const size_t& index) const {
+    isConst = true;
+    key_type key;
+    std::get<0>(key) = index;
+    return position_type(std::weak_ptr<matrix_type>(thisPtr),key)[index];
+  }
+
+  auto size() {
+    return data.size();
   }
 
   iterator begin() {
